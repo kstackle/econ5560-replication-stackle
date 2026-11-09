@@ -1,0 +1,731 @@
+---
+title: "model-draft-1"
+format: html
+editor: visual
+---
+
+# Data and Model Replication 
+
+
+### Cleaning Data & Separating into Forestry, Farm, NBS Dataframes
+```{r}
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(knitr)
+
+
+raw <- read_excel("decoded_data.xls") |>
+  rename(
+    age = age_mid,
+    income = income_mid,
+    years_owned = Yearsowned,
+    reside_on_land = resideonland,
+    forest_landowner = forestlo3,
+    hire_assistance = hireassistance,
+    land_investment = Forlandinvestment,
+    plant_replant_5yr = Plantoreplant5yr,
+    never_applied_costshare = Neverappliedtoacostsharepr,
+    mountain = Mountain
+  )
+
+model_vars <- c(
+  "age",
+  "income",
+  "years_owned",
+  "reside_on_land",
+  "forest_landowner",
+  "hire_assistance",
+  "land_investment",
+  "plant_replant_5yr",
+  "never_applied_costshare",
+  "mountain"
+)
+
+# Forestry model
+forest_data <- raw |>
+  filter(PWSIFORWOMB %in% c(0, 1)) |>
+  select(
+    participation = PWSIFORWOMB,
+    all_of(model_vars)
+  ) |>
+  drop_na()
+
+# Farm model
+farm_data <- raw |>
+  filter(PWSIfarmWOMB %in% c(0, 1)) |>
+  select(
+    participation = PWSIfarmWOMB,
+    all_of(model_vars)
+  ) |>
+  drop_na()
+
+# Nature-based-solutions model
+nbs_data <- raw |>
+  filter(PWSINBSWOMB %in% c(0, 1)) |>
+  select(
+    participation = PWSINBSWOMB,
+    all_of(model_vars)
+  ) |>
+  drop_na()
+```
+
+### Creating a comparison table for Paper's analysis vs. Our analysis
+```{r}
+library(tibble)
+
+# Number of usable outcomes reported in the paper
+paper_n <- c(
+  Forestry = 146,
+  Farm = 155,
+  NBS = 153
+)
+
+# Count rows after removing missing predictors for each model
+forest_complete <- raw |>
+  filter(PWSIFORWOMB %in% c(0, 1)) |>
+  select(all_of(model_vars)) |>
+  drop_na() |>
+  nrow()
+
+farm_complete <- raw |>
+  filter(PWSIfarmWOMB %in% c(0, 1)) |>
+  select(all_of(model_vars)) |>
+  drop_na() |>
+  nrow()
+
+nbs_complete <- raw |>
+  filter(PWSINBSWOMB %in% c(0, 1)) |>
+  select(all_of(model_vars)) |>
+  drop_na() |>
+  nrow()
+
+# Make the comparison table
+comparison_table <- tibble(
+  Model = c("Forestry", "Farm", "NBS"),
+  Paper = c(paper_n["Forestry"], paper_n["Farm"], paper_n["NBS"]),
+  Our_cases = c(forest_complete, farm_complete, nbs_complete),
+  Difference = Paper- Our_cases
+)
+
+comparison_table |> kable()
+```
+Here we see that we are missing 11 individuals in our usable data compared to the actual study, because 11 participants in our data are missing reported income, or the variable `HHIncome` of `0` or `NA`.
+
+
+### Comparing summary statistics
+```{r}
+library(dplyr)
+library(tidyr)
+library(kableExtra)
+
+# Keep only the two landowner groups used in Table 2
+# groupLO: 1 = Forest, 2 = Farm
+table2_data <- raw |>
+  filter(groupLO %in% c(1, 2)) |>
+  mutate(
+    group = case_when(
+      groupLO == 1 ~ "Forest",
+      groupLO == 2 ~ "Farm"
+    )
+  )
+
+# Overall sample-size comparison
+sample_size_table <- table2_data |>
+  count(group, name = "our_total_n") |>
+  mutate(
+    paper_total_n = case_when(
+      group == "Forest" ~ 131,
+      group == "Farm" ~ 69
+    ),
+    n_difference = our_total_n - paper_total_n
+  )
+
+sample_size_table
+
+
+# Use each group's full sample as the denominator.
+# This matches how percentages are presented in the paper.
+group_totals <- table2_data |>
+  count(group, name = "total_n")
+
+
+# -------------------------
+# Our Income Results
+# -------------------------
+income_ours <- table2_data |>
+  filter(HHincome %in% 1:6) |>
+  mutate(
+    variable = "Income",
+    category = case_when(
+      HHincome == 1 ~ "Less than $24,999",
+      HHincome == 2 ~ "$25,000-$49,999",
+      HHincome == 3 ~ "$50,000-$74,999",
+      HHincome == 4 ~ "$75,000-$99,999",
+      HHincome == 5 ~ "$100,000-$149,999",
+      HHincome == 6 ~ "$150,000 or more"
+    )
+  ) |>
+  count(variable, category, group, name = "our_n") |>
+  left_join(group_totals, by = "group") |>
+  mutate(our_percent = round(100 * our_n / total_n, 1))
+
+
+# -------------------------
+# Our Age Results
+# -------------------------
+age_ours <- table2_data |>
+  filter(!is.na(age)) |>
+  mutate(
+    variable = "Age",
+    category = case_when(
+      age == 24 ~ "18-30",
+      age == 38 ~ "30-45",
+      age == 53 ~ "46-60",
+      age == 68 ~ "61-75",
+      age == 80 ~ "75+"
+    )
+  ) |>
+  count(variable, category, group, name = "our_n") |>
+  left_join(group_totals, by = "group") |>
+  mutate(our_percent = round(100 * our_n / total_n, 1))
+
+
+# -------------------------
+# Our Education Results
+# -------------------------
+education_ours <- table2_data |>
+  filter(!is.na(Educationlevel)) |>
+  mutate(
+    variable = "Education",
+    category = case_when(
+      grepl("high|ged", Educationlevel, ignore.case = TRUE) ~ "High school or GED",
+      grepl("some", Educationlevel, ignore.case = TRUE) ~ "Some college degree",
+      grepl("associate", Educationlevel, ignore.case = TRUE) ~ "Associate's degree",
+      grepl("bachelor", Educationlevel, ignore.case = TRUE) ~ "Bachelor's degree",
+      grepl("advanced", Educationlevel, ignore.case = TRUE) ~ "Advanced degree"
+    )
+  ) |>
+  count(variable, category, group, name = "our_n") |>
+  left_join(group_totals, by = "group") |>
+  mutate(our_percent = round(100 * our_n / total_n, 1))
+
+
+# Combine all variables we can calculate from our data.
+# Gender is not included because the raw data has no gender column.
+our_table2 <- bind_rows(
+  income_ours,
+  age_ours,
+  education_ours
+)
+
+
+# -------------------------
+# Table 2 values reported in the paper
+# -------------------------
+paper_table2 <- tibble(
+  variable = c(
+    rep("Gender", 3),
+    rep("Income", 6),
+    rep("Age", 5),
+    rep("Education", 5)
+  ),
+
+  category = c(
+    "Female", "Male", "Other",
+
+    "Less than $24,999", "$25,000-$49,999", "$50,000-$74,999",
+    "$75,000-$99,999", "$100,000-$149,999", "$150,000 or more",
+
+    "18-30", "30-45", "46-60", "61-75", "75+",
+
+    "High school or GED", "Some college degree", "Associate's degree",
+    "Bachelor's degree", "Advanced degree"
+  ),
+
+  paper_forest_percent = c(
+    13.0, 81.7, 5.3,
+
+    0.8, 19.1, 14.5, 15.3, 19.1, 23.7,
+
+    0.8, 2.3, 24.4, 50.4, 21.4,
+
+    9.2, 21.4, 12.2, 26.0, 27.5
+  ),
+
+  paper_farm_percent = c(
+    30.4, 69.6, 0.0,
+
+    4.3, 7.2, 14.5, 24.6, 15.9, 26.1,
+
+    0.0, 4.3, 21.7, 50.7, 23.2,
+
+    15.9, 18.8, 15.9, 18.8, 29.0
+  )
+)
+
+
+# Turn our results into Forest and Farm columns
+our_wide <- our_table2 |>
+  select(variable, category, group, our_n, our_percent) |>
+  pivot_wider(
+    names_from = group,
+    values_from = c(our_n, our_percent)
+  )
+
+
+# -------------------------
+# Final side-by-side replication table
+# -------------------------
+table2_comparison <- paper_table2 |>
+  left_join(our_wide, by = c("variable", "category")) |>
+  rename(
+    our_forest_n = our_n_Forest,
+    our_farm_n = our_n_Farm,
+    our_forest_percent = our_percent_Forest,
+    our_farm_percent = our_percent_Farm
+  ) |>
+  mutate(
+    paper_forest_total_n = 131,
+    our_forest_total_n = 131,
+    paper_farm_total_n = 69,
+    our_farm_total_n = 69,
+
+    forest_difference = round(
+      our_forest_percent - paper_forest_percent,
+      1
+    ),
+
+    farm_difference = round(
+      our_farm_percent - paper_farm_percent,
+      1
+    )
+  ) |>
+  select(
+    variable,
+    category,
+
+    
+    paper_forest_percent,
+    our_forest_n,
+    our_forest_percent,
+    forest_difference,
+
+    
+    paper_farm_percent,
+    our_farm_n,
+    our_farm_percent,
+    farm_difference
+  )
+
+# nicely display table
+table_for_display <- table2_comparison |>
+  rename(
+    Variable = variable,
+    Category = category,
+
+
+    `Paper Forest %` = paper_forest_percent,
+    `Our Forest Category n` = our_forest_n,
+    `Our Forest %` = our_forest_percent,
+    `Forest Difference` = forest_difference,
+
+    `Paper Farm %` = paper_farm_percent,
+    `Our Farm Category n` = our_farm_n,
+    `Our Farm %` = our_farm_percent,
+    `Farm Difference` = farm_difference
+  )
+
+kable(
+  table_for_display,
+  caption = "Comparison of Table 2 Summary Statistics",
+  digits = 1
+) |> 
+    row_spec(
+    c(1, 2, 3),
+    background = "#FFF3CD"
+  )
+
+```
+Missing Gender data. 
+
+
+```{r}
+library(dplyr)
+library(knitr)
+library(kableExtra)
+
+table1_variable_check <- tibble(
+  `Variable` = c(
+    "Forestry participation: PWSIFOR (PWSIFORWOMB)",
+    "Farm participation: PWSIFARM (PWSIfarmWOMB)",
+    "NBS participation: PWSINBS (PWSINBSWOMB)",
+    "Age (age_mid)",
+    "Income (income_mid)",
+    "Years owned (Yearsowned)",
+    "Resides on land (resideonland)",
+    "Forest landowner (forestlo3)",
+    "Hires assistance (hireassistance)",
+    "Land for investment (Forlandinvestment)",
+    "Plant/replant within 5 years (Plantoreplant5yr)",
+    "Never applied for cost-share (Neverappliedtoacostsharepr)",
+    "Mountain region (Mountain)"
+  ),
+
+  `Listed in Paper Table 1` = "✓",
+  `Available in Our Data` = "✓"
+)
+
+table1_variable_check |>
+  kable(
+    format = "html",
+    escape = FALSE,
+    caption = "Comparison of Variables Listed in Table 1 and Available in the Decoded Data",
+    align = c("l", "c", "c")
+  ) |>
+  kable_styling(
+    full_width = FALSE,
+    bootstrap_options = c("striped", "condensed")
+  ) |>
+  column_spec(2:3, color = "#1B6B3A", bold = TRUE)
+
+```
+
+
+### Fit the 3 regression models
+```{r}
+forest_model <- glm(
+  participation ~ age + income + years_owned +
+    reside_on_land + forest_landowner +
+    hire_assistance + land_investment +
+    plant_replant_5yr + never_applied_costshare +
+    mountain,
+  data = forest_data,
+  family = binomial()
+)
+
+farm_model <- glm(
+  participation ~ age + income + years_owned +
+    reside_on_land + forest_landowner +
+    hire_assistance + land_investment +
+    plant_replant_5yr + never_applied_costshare +
+    mountain,
+  data = farm_data,
+  family = binomial()
+)
+
+nbs_model <- glm(
+  participation ~ age + income + years_owned +
+    reside_on_land + forest_landowner +
+    hire_assistance + land_investment +
+    plant_replant_5yr + never_applied_costshare +
+    mountain,
+  data = nbs_data,
+  family = binomial()
+)
+```
+
+
+
+
+### Define function for odds ratio - Table 4
+```{r}
+library(sandwich)
+library(lmtest)
+
+get_results <- function(model, model_name) {
+
+  robust_model <- coeftest(
+    model,
+    vcov. = vcovHC(model, type = "HC1")
+  )
+
+  tibble(
+    Model = model_name,
+    Variable = rownames(robust_model),
+
+    Our_OR = exp(robust_model[, "Estimate"]),
+
+    # Converts the robust SE from log-odds scale
+    # to odds-ratio scale for comparison with Table 4
+    Our_Robust_SE =
+      exp(robust_model[, "Estimate"]) *
+      robust_model[, "Std. Error"],
+
+    Our_p_value = robust_model[, "Pr(>|z|)"]
+  )
+}
+
+our_results <- bind_rows(
+  get_results(forest_model, "Forestry"),
+  get_results(farm_model, "Farm"),
+  get_results(nbs_model, "NBS")
+) |>
+  mutate(
+    Variable = recode(
+      Variable,
+      "(Intercept)" = "Constant",
+      "age" = "Age",
+      "income" = "Income",
+      "years_owned" = "Years owned",
+      "reside_on_land" = "Reside on land",
+      "forest_landowner" = "Forest landowner",
+      "hire_assistance" = "Hire assistance",
+      "land_investment" = "Land for investment",
+      "plant_replant_5yr" = "Plant or replant",
+      "never_applied_costshare" = "Never applied cost-share",
+      "mountain" = "Mountain"
+    ),
+    across(c(Our_OR, Our_Robust_SE, Our_p_value), round, 3)
+  )
+
+our_results |> 
+  rename(
+    Rep_OR = Our_OR,
+    Rep_Robust_SE = Our_Robust_SE,
+    Rep_p_value = Our_p_value
+  ) |> 
+  kable()
+```
+
+### Hard coded Table 4 numbers
+```{r}
+paper_results <- tribble(
+  ~Model, ~Variable, ~Paper_OR, ~Paper_Robust_SE,
+
+  "Forestry", "Age", 0.931, 0.028,
+  "Forestry", "Income", 1.140, 0.157,
+  "Forestry", "Years owned", 0.982, 0.011,
+  "Forestry", "Reside on land", 0.190, 0.107,
+  "Forestry", "Forest landowner", 2.244, 0.990,
+  "Forestry", "Hire assistance", 2.760, 1.247,
+  "Forestry", "Land for investment", 5.685, 3.009,
+  "Forestry", "Plant or replant", 7.820, 4.381,
+  "Forestry", "Never applied cost-share", 0.254, 0.115,
+  "Forestry", "Mountain", 0.701, 0.353,
+  "Forestry", "Constant", 164.091, 347.851,
+
+  "Farm", "Age", 0.931, 0.021,
+  "Farm", "Income", 1.039, 0.127,
+  "Farm", "Years owned", 0.992, 0.008,
+  "Farm", "Reside on land", 0.410, 0.187,
+  "Farm", "Forest landowner", 0.467, 0.196,
+  "Farm", "Hire assistance", 1.432, 0.600,
+  "Farm", "Land for investment", 1.015, 0.471,
+  "Farm", "Plant or replant", 1.924, 0.880,
+  "Farm", "Never applied cost-share", 0.250, 0.106,
+  "Farm", "Mountain", 0.300, 0.138,
+  "Farm", "Constant", 336.630, 592.815,
+
+  "NBS", "Age", 0.912, 0.023,
+  "NBS", "Income", 1.061, 0.011,
+  "NBS", "Years owned", 1.007, 0.003,
+  "NBS", "Reside on land", 0.329, 0.156,
+  "NBS", "Forest landowner", 1.827, 0.746,
+  "NBS", "Hire assistance", 2.250, 0.893,
+  "NBS", "Land for investment", 2.078, 0.892,
+  "NBS", "Plant or replant", 1.343, 0.577,
+  "NBS", "Never applied cost-share", 0.415, 0.156,
+  "NBS", "Mountain", 1.055, 0.439,
+  "NBS", "Constant", 308.472, 545.181
+)
+
+paper_results
+```
+
+
+### Create tables to compare our results to actuals
+```{r}
+
+
+# ------------------------------------------------
+# Add the p-values reported in the paper's Table 4
+# ------------------------------------------------
+paper_p_values <- tribble(
+  ~Model, ~Variable, ~Paper_p_value,
+
+  "Forestry", "Age", "0.018",
+  "Forestry", "Income", "0.341",
+  "Forestry", "Years owned", "0.096",
+  "Forestry", "Reside on land", "0.003",
+  "Forestry", "Forest landowner", "0.067",
+  "Forestry", "Hire assistance", "0.025",
+  "Forestry", "Land for investment", "0.001",
+  "Forestry", "Plant or replant", "0.001",
+  "Forestry", "Never applied cost-share", "0.003",
+  "Forestry", "Mountain", "0.480",
+  "Forestry", "Constant", "0.016",
+
+  "Farm", "Age", "0.001",
+  "Farm", "Income", "0.756",
+  "Farm", "Years owned", "0.304",
+  "Farm", "Reside on land", "0.051",
+  "Farm", "Forest landowner", "0.070",
+  "Farm", "Hire assistance", "0.391",
+  "Farm", "Land for investment", "0.974",
+  "Farm", "Plant or replant", "0.152",
+  "Farm", "Never applied cost-share", "0.001",
+  "Farm", "Mountain", "0.009",
+  "Farm", "Constant", "0.001",
+
+  "NBS", "Age", "< 0.001",
+  "NBS", "Income", "0.568",
+  "NBS", "Years owned", "0.064",
+  "NBS", "Reside on land", "0.019",
+  "NBS", "Forest landowner", "0.140",
+  "NBS", "Hire assistance", "0.041",
+  "NBS", "Land for investment", "0.089",
+  "NBS", "Plant or replant", "0.493",
+  "NBS", "Never applied cost-share", "0.019",
+  "NBS", "Mountain", "0.898",
+  "NBS", "Constant", "0.001"
+)
+
+# Correct the NBS income robust SE to exactly what Table 4 prints.
+# Note: 0.011 appears inconsistent with its reported p-value, but this
+# keeps the "Actual" column faithful to the published table.
+paper_results <- paper_results |>
+  mutate(
+    Paper_Robust_SE = if_else(
+      Model == "NBS" & Variable == "Income",
+      0.011,
+      Paper_Robust_SE
+    )
+  ) |>
+  left_join(paper_p_values, by = c("Model", "Variable"))
+
+
+# ------------------------------------------------
+# Combine the paper's results with our R results
+# ------------------------------------------------
+variable_order <- c(
+  "Age",
+  "Income",
+  "Years owned",
+  "Reside on land",
+  "Forest landowner",
+  "Hire assistance",
+  "Land for investment",
+  "Plant or replant",
+  "Never applied cost-share",
+  "Mountain",
+  "Constant"
+)
+
+table4_comparison <- paper_results |>
+  left_join(
+    our_results,
+    by = c("Model", "Variable")
+  ) |>
+  mutate(
+    Variable = factor(Variable, levels = variable_order),
+
+    `Actual OR (Robust SE)` =
+      paste0(
+        round(Paper_OR, 3),
+        " (",
+        round(Paper_Robust_SE, 3),
+        ")"
+      ),
+
+    `Replicated OR (Robust SE)` =
+      paste0(
+        round(Our_OR, 3),
+        " (",
+        round(Our_Robust_SE, 3),
+        ")"
+      ),
+
+    `Replicated p-value` = case_when(
+      Our_p_value < 0.001 ~ "< 0.001",
+      TRUE ~ as.character(round(Our_p_value, 3))
+    ),
+
+    `Difference in OR` = round(Our_OR - Paper_OR, 3),
+
+    absolute_difference = abs(Our_OR - Paper_OR)
+  ) |>
+  arrange(Model, Variable)
+
+
+# ------------------------------------------------
+# Function to create one formatted model table
+# ------------------------------------------------
+make_model_table <- function(model_name, paper_n, replicated_n) {
+
+  one_model <- table4_comparison |>
+    filter(Model == model_name) |>
+    select(
+      Variable,
+      `Actual OR (Robust SE)`,
+      `Actual p-value` = Paper_p_value,
+      `Replicated OR (Robust SE)`,
+      `Replicated p-value`,
+      `Difference in OR`,
+      absolute_difference
+    )
+
+  # Find the 3 largest predictor differences.
+  # Constant is not included in the highlighting calculation.
+  largest_difference_rows <- one_model |>
+    filter(Variable != "Constant") |>
+    slice_max(absolute_difference, n = 3, with_ties = FALSE) |>
+    pull(Variable)
+
+  highlighted_row_numbers <- which(
+    one_model$Variable %in% largest_difference_rows
+  )
+
+  one_model |>
+    select(-absolute_difference) |>
+    kable(
+      format = "html",
+      caption = paste0(
+        model_name,
+        " Participation Model ",
+        "(Paper N = ", paper_n,
+        "; Replicated N = ", replicated_n,
+        ")"
+      ),
+      align = c("l", "c", "c", "c", "c", "c"),
+      escape = FALSE
+    ) |>
+    kable_styling(
+      full_width = FALSE,
+      bootstrap_options = c("striped", "condensed")
+    ) |>
+    row_spec(
+      highlighted_row_numbers,
+      background = "#FFF3CD",
+      bold = TRUE
+    )
+}
+
+
+# ------------------------------------------------
+# Create and print the three comparison tables
+# ------------------------------------------------
+
+# Table 1: Forestry model
+make_model_table(
+  model_name = "Forestry",
+  paper_n = 146,
+  replicated_n = nrow(forest_data)
+) 
+
+# Table 2: Farm model
+make_model_table(
+  model_name = "Farm",
+  paper_n = 155,
+  replicated_n = nrow(farm_data)
+)
+
+# Table 3: Nature-based-solutions model
+make_model_table(
+  model_name = "NBS",
+  paper_n = 153,
+  replicated_n = nrow(nbs_data)
+)
+```
+
+
